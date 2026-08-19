@@ -91,33 +91,70 @@ Guia prático para colocar o CRT Password Manager no ar numa VPS
 
 Quando o app não ganha um domínio/subdomínio próprio, e sim um subpath
 dentro de um site já existente (ex: `crtpublicidade.com.br/passcrt`),
-o fluxo muda em relação às seções 6/7 acima:
+o fluxo muda em relação às seções 6/7 acima. A pasta com o repositório
+inteiro (backend **e** frontend, como no GitHub) fica fora do
+`public_html`; só o build estático do frontend é copiado pra dentro do
+`public_html`, onde a web de fato serve.
 
-1. **Código do backend** vai em `/home/<usuario>/apps/<app>-backend/`
-   (fora do `public_html` do domínio) — copiado via `rsync`
-   (excluindo `node_modules`, `.env*`, `test/`), com `npm ci --omit=dev`
-   rodado **direto no servidor** (nunca copie `node_modules` de outra
+1. **Repositório inteiro** clonado direto no servidor, em
+   `/home/<usuario>/apps/<app>/` (fora do `public_html` do domínio —
+   o `.env` do backend, com os segredos, nunca fica numa pasta
+   tecnicamente acessível pela web):
+   ```bash
+   cd /home/<usuario>/apps
+   git clone https://github.com/<org>/<repo>.git <app>
+   ```
+2. **Backend**: `cd <app>/backend && npm ci --omit=dev`, rodado
+   **direto no servidor** (nunca copie `node_modules` de outra
    máquina/SO — módulos nativos como o `argon2` são compilados para a
-   plataforma específica).
-2. **Processo**: `pm2 start src/server.js --name <app>-backend --cwd
-   /home/<usuario>/apps/<app>-backend`, seguido de `pm2 save`. Escolha
+   plataforma específica). Depois recria o `.env` de produção nessa
+   pasta (não vem do git — está no `.gitignore`).
+3. **Processo**: `pm2 start src/server.js --name <app>-backend --cwd
+   /home/<usuario>/apps/<app>/backend`, seguido de `pm2 save`. Escolha
    uma porta livre (`ss -tlnp | grep 300`) — nesse servidor, 3000-3002
    já estavam em uso por outros apps; o passcrt ficou na **3003**.
-3. **`.env` do backend** precisa de `COOKIE_PATH=/<subpath>/api/auth`
+4. **`.env` do backend** precisa de `COOKIE_PATH=/<subpath>/api/auth`
    (ver seção 3 acima) e `FRONTEND_URL` apontando para o domínio
    inteiro (a origem é a mesma, então nem é CORS de verdade — é
    same-origin).
-4. **Frontend**: build local com `VITE_API_URL=/<subpath>/api` (URL
-   relativa, embutida no bundle), depois `rsync` de `frontend/dist/`
-   para `public_html/<subpath>/`.
-5. **Roteamento**: um `.htaccess` dentro de `public_html/<subpath>/`
+5. **Frontend**: `cd <app>/frontend && npm install` (⚠️ **`npm
+   install`, não `npm ci`** — o `package-lock.json` gerado no Mac não
+   carrega o binário nativo `@rolldown/binding-linux-x64-gnu` que o
+   Vite 8/rolldown precisa no Linux; só um `npm install` direto no
+   servidor resolve isso). Requer **Node ≥ 20.19** — se o Node do
+   sistema for mais antigo (era o caso aqui, v18), baixe um Node
+   avulso só pra isso, sem tocar no Node do sistema (que outros apps
+   via PM2 dependem):
+   ```bash
+   mkdir -p /home/<usuario>/apps/.toolchain && cd $_
+   curl -fsSL -o node.tar.xz https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz
+   tar -xJf node.tar.xz && mv node-v22.14.0-linux-x64 node22
+   export PATH=/home/<usuario>/apps/.toolchain/node22/bin:$PATH
+   ```
+   Depois builda com a URL da API relativa ao subpath (embutida no
+   bundle): `VITE_API_URL=/<subpath>/api npm run build`.
+6. **Publicar o build**: `rsync -a <app>/frontend/dist/
+   /home/<usuario>/web/<dominio>/public_html/<subpath>/` (sem
+   `--delete`, pra não apagar o `.htaccess`).
+7. **Roteamento**: um `.htaccess` dentro de `public_html/<subpath>/`
    (exemplo em [`deploy/passcrt.htaccess`](./deploy/passcrt.htaccess))
    faz o proxy de `/<subpath>/api/*` pro Node local via `mod_rewrite`
    com a flag `[P]` (único jeito de fazer proxy num `.htaccess`), serve
    arquivos estáticos que existem de verdade, e cai no `index.html`
-   para qualquer outra rota (fallback de SPA).
-6. **Ownership**: tudo criado por `root` via SSH precisa voltar para o
+   para qualquer outra rota (fallback de SPA). Esse arquivo não faz
+   parte do build do Vite — precisa ser recolocado toda vez que o
+   `public_html/<subpath>` for recriado do zero.
+8. **Ownership**: tudo criado por `root` via SSH precisa voltar para o
    usuário do domínio no Hestia (`chown -R <usuario>:<usuario>`), tanto
-   em `apps/<app>-backend` quanto em `public_html/<subpath>`.
-7. Nginx (na frente) e Postgres/PM2 já existentes no servidor não
+   em `apps/<app>` quanto em `public_html/<subpath>`.
+9. Nginx (na frente), Postgres e PM2 já existentes no servidor não
    precisam de nenhuma alteração — só o `.htaccess` do subpath.
+
+**Atualizar depois de um deploy inicial** (`git pull` + rebuild):
+```bash
+cd /home/<usuario>/apps/<app> && git pull
+(cd backend && npm ci --omit=dev && pm2 restart <app>-backend)
+(cd frontend && export PATH=/home/<usuario>/apps/.toolchain/node22/bin:$PATH \
+   && npm install && VITE_API_URL=/<subpath>/api npm run build \
+   && rsync -a dist/ /home/<usuario>/web/<dominio>/public_html/<subpath>/)
+```
