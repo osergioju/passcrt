@@ -1,0 +1,256 @@
+// CRT Password Manager — schema do banco de dados
+// PostgreSQL + Prisma. Todos os identificadores são UUID.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum AuditAction {
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  CREATE_USER
+  UPDATE_USER
+  DELETE_USER
+  CREATE_ADMIN
+  UPDATE_ADMIN
+  DELETE_ADMIN
+  CREATE_CLIENT
+  UPDATE_CLIENT
+  DELETE_CLIENT
+  CREATE_CATEGORY
+  UPDATE_CATEGORY
+  DELETE_CATEGORY
+  CREATE_CREDENTIAL
+  UPDATE_CREDENTIAL
+  DELETE_CREDENTIAL
+  VIEW_PASSWORD
+  COPY_PASSWORD
+  COPY_LOGIN
+  UPDATE_PERMISSION
+  GRANT_CREDENTIAL_ACCESS
+  REVOKE_CREDENTIAL_ACCESS
+}
+
+// ---------------------------------------------------------------------------
+// Identidade, papéis e permissões (RBAC granular)
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  status       Status   @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roles                UserRole[]
+  sessions             Session[]
+  auditLogs            AuditLog[]
+  createdCredentials   Credential[]           @relation("CredentialCreatedBy")
+  updatedCredentials   Credential[]           @relation("CredentialUpdatedBy")
+  credentialGrants     CredentialPermission[] @relation("CredentialGrantUser")
+  grantedCredentialsBy CredentialPermission[] @relation("CredentialGrantedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------
+// Sessões e refresh tokens
+// ---------------------------------------------------------------------------
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  userAgent  String?
+  ipAddress  String?
+  rememberMe Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  sessionId String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Clientes e categorias
+// ---------------------------------------------------------------------------
+
+model Client {
+  id          String   @id @default(uuid())
+  name        String
+  tradeName   String?
+  description String?
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  credentials Credential[]
+
+  @@map("clients")
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  icon        String?
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  credentials Credential[]
+
+  @@map("categories")
+}
+
+// ---------------------------------------------------------------------------
+// Credenciais (cofre)
+// ---------------------------------------------------------------------------
+
+model Credential {
+  id       String  @id @default(uuid())
+  name     String
+  clientId String
+  categoryId String
+  url      String?
+  username String?
+
+  // Segredo cifrado com AES-256-GCM. Formato: "iv:authTag:ciphertext" (base64).
+  // A ENCRYPTION_KEY nunca é armazenada aqui nem em nenhuma tabela.
+  encryptedPassword String
+
+  notes     String?
+  tags      String[] @default([])
+  status    Status   @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdById String?
+  updatedById String?
+
+  client      Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  category    Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy   User?                  @relation("CredentialCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?                  @relation("CredentialUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  permissions CredentialPermission[]
+
+  @@index([clientId])
+  @@index([categoryId])
+  @@map("credentials")
+}
+
+// Concede a um usuário específico acesso a uma credencial específica.
+// A regra mais específica (aqui) prevalece sobre a permissão de role.
+model CredentialPermission {
+  id              String   @id @default(uuid())
+  credentialId    String
+  userId          String
+  canViewPassword Boolean  @default(true)
+  grantedById     String?
+  createdAt       DateTime @default(now())
+
+  credential Credential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  user       User       @relation("CredentialGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy  User?      @relation("CredentialGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([credentialId, userId])
+  @@map("credential_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// Auditoria
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?
+  action     AuditAction
+  resource   String
+  resourceId String?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
