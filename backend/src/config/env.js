@@ -19,6 +19,12 @@ export const env = {
   encryptionKey: required('ENCRYPTION_KEY'),
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   allowCreateAdmin: process.env.ALLOW_CREATE_ADMIN === 'true',
+  // Escopo do cookie de refresh. Padrão assume a API montada na raiz
+  // do domínio (/api/...). Quando a API é servida atrás de um subpath
+  // (ex: proxy reverso em /passcrt/api/...), isso precisa apontar para
+  // esse mesmo subpath — senão o navegador nunca reenvia o cookie nas
+  // chamadas de /refresh e /logout.
+  cookiePath: process.env.COOKIE_PATH || '/api/auth',
 }
 
 if (env.encryptionKey && Buffer.from(env.encryptionKey, 'hex').length !== 32) {

@@ -11,7 +11,7 @@ function refreshCookieOptions(rememberMe) {
     httpOnly: true,
     secure: env.nodeEnv === 'production',
     sameSite: 'lax',
-    path: '/api/auth',
+    path: env.cookiePath,
   }
   // Sem "lembrar de mim": cookie de sessão (expira ao fechar o navegador).
   if (rememberMe) {
@@ -50,7 +50,7 @@ export const logout = asyncHandler(async (req, res) => {
 
   await authService.logout({ rawRefreshToken, userId: req.user?.id, ipAddress, userAgent })
 
-  res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' })
+  res.clearCookie(REFRESH_COOKIE_NAME, { path: env.cookiePath })
   res.status(204).send()
 })
 
