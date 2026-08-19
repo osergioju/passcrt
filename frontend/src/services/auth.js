@@ -1,7 +1,11 @@
 import { http } from './http.js'
 
 export async function login({ email, password, rememberMe }) {
-  const res = await http.post('/auth/login', { email, password, rememberMe }, { _skipAuth: true })
+  const res = await http.post(
+    '/auth/login',
+    { email, password, rememberMe },
+    { _skipAuth: true, _skipRefresh: true },
+  )
   return res.data
 }
 
