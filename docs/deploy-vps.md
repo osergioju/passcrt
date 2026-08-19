@@ -4,6 +4,13 @@ Guia prático para colocar o CRT Password Manager no ar numa VPS
 (Ubuntu/Debian). Arquivos de exemplo referenciados aqui estão em
 `docs/deploy/`.
 
+> **Deploy real em produção:** `https://crtpublicidade.com.br/passcrt/`
+> (VPS Hestia, mesmo servidor de outros apps da agência — finance_jr,
+> hub, socialdash, taskrow). Esse ambiente usa PM2 + subpath com
+> `.htaccess` em vez de systemd + subdomínio dedicado (seções 6/7
+> abaixo) — ver "Variante: subpath sob domínio existente (Hestia)" no
+> fim deste documento para a receita exata que foi usada.
+
 ## 1. Servidor
 
 - [ ] VPS com Ubuntu 22.04+ ou Debian 12+, usuário não-root com sudo
@@ -79,3 +86,38 @@ Guia prático para colocar o CRT Password Manager no ar numa VPS
 - [ ] Login, refresh e logout testados no domínio real
 - [ ] Criar ao menos um segundo Admin Master ou documentar quem tem acesso ao servidor — se o único Admin Master perder a senha e ninguém tiver acesso SSH, não há caminho de recuperação pela aplicação (por design)
 - [ ] `backend/.env`, `backend/.env.test` e qualquer cópia local de segredos **fora** do controle de versão
+
+## Variante: subpath sob domínio existente (Hestia + PM2 + Apache)
+
+Quando o app não ganha um domínio/subdomínio próprio, e sim um subpath
+dentro de um site já existente (ex: `crtpublicidade.com.br/passcrt`),
+o fluxo muda em relação às seções 6/7 acima:
+
+1. **Código do backend** vai em `/home/<usuario>/apps/<app>-backend/`
+   (fora do `public_html` do domínio) — copiado via `rsync`
+   (excluindo `node_modules`, `.env*`, `test/`), com `npm ci --omit=dev`
+   rodado **direto no servidor** (nunca copie `node_modules` de outra
+   máquina/SO — módulos nativos como o `argon2` são compilados para a
+   plataforma específica).
+2. **Processo**: `pm2 start src/server.js --name <app>-backend --cwd
+   /home/<usuario>/apps/<app>-backend`, seguido de `pm2 save`. Escolha
+   uma porta livre (`ss -tlnp | grep 300`) — nesse servidor, 3000-3002
+   já estavam em uso por outros apps; o passcrt ficou na **3003**.
+3. **`.env` do backend** precisa de `COOKIE_PATH=/<subpath>/api/auth`
+   (ver seção 3 acima) e `FRONTEND_URL` apontando para o domínio
+   inteiro (a origem é a mesma, então nem é CORS de verdade — é
+   same-origin).
+4. **Frontend**: build local com `VITE_API_URL=/<subpath>/api` (URL
+   relativa, embutida no bundle), depois `rsync` de `frontend/dist/`
+   para `public_html/<subpath>/`.
+5. **Roteamento**: um `.htaccess` dentro de `public_html/<subpath>/`
+   (exemplo em [`deploy/passcrt.htaccess`](./deploy/passcrt.htaccess))
+   faz o proxy de `/<subpath>/api/*` pro Node local via `mod_rewrite`
+   com a flag `[P]` (único jeito de fazer proxy num `.htaccess`), serve
+   arquivos estáticos que existem de verdade, e cai no `index.html`
+   para qualquer outra rota (fallback de SPA).
+6. **Ownership**: tudo criado por `root` via SSH precisa voltar para o
+   usuário do domínio no Hestia (`chown -R <usuario>:<usuario>`), tanto
+   em `apps/<app>-backend` quanto em `public_html/<subpath>`.
+7. Nginx (na frente) e Postgres/PM2 já existentes no servidor não
+   precisam de nenhuma alteração — só o `.htaccess` do subpath.

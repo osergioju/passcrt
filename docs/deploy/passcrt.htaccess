@@ -1,0 +1,15 @@
+RewriteEngine On
+RewriteBase /passcrt/
+
+# Proxy da API pro backend Node (PM2, porta 3003) — usa o flag [P] do
+# mod_rewrite, o único jeito de fazer proxy dentro de um .htaccess.
+RewriteRule ^api/(.*)$ http://127.0.0.1:3003/api/$1 [P,L]
+
+# Assets/arquivos que existem de verdade servem direto
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Fallback SPA: qualquer outra rota dentro de /passcrt/ volta pro
+# index.html (o React Router cuida do resto no navegador)
+RewriteRule ^ index.html [L]
