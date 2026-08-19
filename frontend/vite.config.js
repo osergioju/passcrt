@@ -5,6 +5,13 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Caminhos dos assets no HTML gerado (script/link src) são
+  // relativos a este `base`. Padrão "/" funciona quando o app é
+  // servido na raiz do domínio; num deploy atrás de um subpath (ex:
+  // crtpublicidade.com.br/passcrt/), defina VITE_BASE_PATH=/passcrt/
+  // antes do build — senão os assets tentam carregar da raiz do
+  // domínio e dão 404 (tela em branco).
+  base: process.env.VITE_BASE_PATH || '/',
   server: {
     port: 5173,
   },
